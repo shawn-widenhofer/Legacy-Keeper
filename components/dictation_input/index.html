@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: sans-serif;
+        color: #ffffff;
+        background: #383392;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background: #383392;
+      }
+
+      label {
+        display: block;
+        margin: 0 0 0.4rem;
+        font-size: 0.9rem;
+        font-weight: 600;
+      }
+
+      textarea {
+        display: block;
+        width: 100%;
+        min-height: 6rem;
+        resize: vertical;
+        padding: 0.75rem;
+        border: 1px solid #707cf1;
+        border-radius: 0.5rem;
+        background: #241e6a;
+        color: #ffffff;
+        font: inherit;
+        line-height: 1.45;
+      }
+
+      textarea::placeholder {
+        color: #d7d5ff;
+        opacity: 0.8;
+      }
+
+      textarea:focus-visible,
+      button:focus-visible {
+        outline: 2px solid #00bbba;
+        outline-offset: 2px;
+      }
+
+      .actions {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+        margin-top: 0.55rem;
+      }
+
+      button {
+        min-height: 2.5rem;
+        padding: 0.45rem 0.8rem;
+        border: 1px solid #00bbba;
+        border-radius: 0.45rem;
+        background: #00bbba;
+        color: #151744;
+        font: inherit;
+        font-weight: 650;
+        cursor: pointer;
+      }
+
+      button.secondary {
+        background: #241e6a;
+        color: #ffffff;
+      }
+
+      button:disabled {
+        cursor: not-allowed;
+        opacity: 0.55;
+      }
+
+      #status {
+        flex: 1;
+        color: #ffffff;
+        font-size: 0.82rem;
+      }
+    </style>
+  </head>
+  <body>
+    <label id="label" for="message"></label>
+    <textarea id="message"></textarea>
+    <div class="actions">
+      <button id="dictate" class="secondary" type="button" aria-label="Start dictation">
+        🎙 Dictate
+      </button>
+      <button id="submit" type="button">Send</button>
+      <span id="status" role="status" aria-live="polite"></span>
+    </div>
+    <script>
+      const textarea = document.getElementById("message");
+      const label = document.getElementById("label");
+      const dictateButton = document.getElementById("dictate");
+      const submitButton = document.getElementById("submit");
+      const status = document.getElementById("status");
+      let recognition = null;
+      let interimText = "";
+      let submitId = "";
+
+      function sendMessage(type, extra = {}) {
+        window.parent.postMessage(
+          { isStreamlitMessage: true, type, ...extra },
+          "*"
+        );
+      }
+
+      function setReady() {
+        sendMessage("streamlit:componentReady", { apiVersion: 1 });
+        sendMessage("streamlit:setFrameHeight", { height: document.body.scrollHeight });
+      }
+
+      function updateControls() {
+        submitButton.disabled = !textarea.value.trim();
+      }
+
+      function startDictation() {
+        const SpeechRecognition =
+          window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!SpeechRecognition) {
+          status.textContent =
+            "Dictation is unavailable in this browser. You can still type.";
+          return;
+        }
+
+        if (recognition) {
+          recognition.stop();
+          return;
+        }
+
+        recognition = new SpeechRecognition();
+        recognition.continuous = false;
+        recognition.interimResults = true;
+        recognition.lang = navigator.language || "en-US";
+        interimText = "";
+        dictateButton.textContent = "■ Stop dictation";
+        dictateButton.setAttribute("aria-label", "Stop dictation");
+        status.textContent = "Listening…";
+
+        recognition.onresult = (event) => {
+          let finalText = "";
+          interimText = "";
+          for (let i = event.resultIndex; i < event.results.length; i += 1) {
+            const transcript = event.results[i][0].transcript;
+            if (event.results[i].isFinal) {
+              finalText += transcript;
+            } else {
+              interimText += transcript;
+            }
+          }
+          if (finalText) {
+            const separator = textarea.value.trim() ? " " : "";
+            textarea.value += separator + finalText.trim();
+            textarea.dispatchEvent(new Event("input", { bubbles: true }));
+          }
+          status.textContent = interimText || "Listening…";
+        };
+
+        recognition.onerror = (event) => {
+          const messages = {
+            "not-allowed": "Microphone permission was denied.",
+            "service-not-allowed": "The browser speech service is unavailable.",
+            "no-speech": "No speech was detected. Try again.",
+            "audio-capture": "No microphone was found.",
+            network:
+              "The browser speech service could not connect. Check network and microphone access, or type instead.",
+          };
+          status.textContent =
+            messages[event.error] || `Dictation error: ${event.error}.`;
+        };
+
+        recognition.onend = () => {
+          recognition = null;
+          dictateButton.textContent = "🎙 Dictate";
+          dictateButton.setAttribute("aria-label", "Start dictation");
+          updateControls();
+          if (interimText) {
+            status.textContent = "Dictation stopped. Try again or type.";
+          } else if (status.textContent === "Listening…") {
+            status.textContent = "";
+          }
+        };
+
+        try {
+          recognition.start();
+        } catch (error) {
+          recognition = null;
+          dictateButton.textContent = "🎙 Dictate";
+          dictateButton.setAttribute("aria-label", "Start dictation");
+          status.textContent = "Could not start dictation. Check microphone access.";
+        }
+      }
+
+      dictateButton.addEventListener("click", startDictation);
+      textarea.addEventListener("input", updateControls);
+      submitButton.addEventListener("click", () => {
+        const text = textarea.value.trim();
+        if (!text) return;
+        submitId =
+          typeof crypto.randomUUID === "function"
+            ? crypto.randomUUID()
+            : `${Date.now()}-${Math.random()}`;
+        sendMessage("streamlit:setComponentValue", {
+          value: { text, submit_id: submitId },
+        });
+        textarea.value = "";
+        status.textContent = "";
+        updateControls();
+      });
+
+      window.addEventListener("message", (event) => {
+        if (event.data?.type !== "streamlit:render") return;
+        const args = event.data.args || {};
+        label.textContent = args.label || "Message";
+        textarea.placeholder = args.placeholder || "";
+        updateControls();
+        setReady();
+      });
+
+      updateControls();
+      setReady();
+    </script>
+  </body>
+</html>

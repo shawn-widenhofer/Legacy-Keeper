@@ -1,0 +1,11 @@
+.env
+.env.*
+!.env.example
+.streamlit/secrets.toml
+interview_data/
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.zip
+.pytest_cache/
